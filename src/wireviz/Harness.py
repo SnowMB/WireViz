@@ -64,8 +64,8 @@ class Harness:
 
     def create_graph(self) -> Dot:
         font = 'arial'
-        dot = Dot(graph_type='graph',
-                 rankdir='LR',
+        dot = Dot(graph_type='graph')
+        dot.set_graph_defaults(rankdir='LR',
                  ranksep='2',
                  bgcolor='white',
                  nodesep='0.33',
@@ -254,16 +254,20 @@ class Harness:
                     dot.set_edge_defaults(color=':'.join(['#000000', wv_colors.get_color_hex('SN', pad=False)[0], '#000000']))
                 if connection_color.from_port is not None:  # connect to left
                     from_port = f':p{connection_color.from_port}r' if self.connectors[connection_color.from_name].style != 'simple' else ''
-                    code_left_1 = f'{connection_color.from_name}{from_port}:e'
-                    code_left_2 = f'{cable.name}:w{connection_color.via_port}:w'
+                    #code_left_1 = f'"{connection_color.from_name}"{from_port}:e'
+                    #code_left_2 = f'"{cable.name}":w{connection_color.via_port}:w'
+                    code_left_1 = f'"{connection_color.from_name}"{from_port}'
+                    code_left_2 = f'"{cable.name}":w{connection_color.via_port}'
                     e = Edge(code_left_1, code_left_2)
                     dot.add_edge(e)
                     from_string = f'{connection_color.from_name}:{connection_color.from_port}' if self.connectors[connection_color.from_name].show_name else ''
                     html = html.replace(f'<!-- {connection_color.via_port}_in -->', from_string)
                 if connection_color.to_port is not None:  # connect to right
-                    code_right_1 = f'{cable.name}:w{connection_color.via_port}:e'
                     to_port = f':p{connection_color.to_port}l' if self.connectors[connection_color.to_name].style != 'simple' else ''
-                    code_right_2 = f'{connection_color.to_name}{to_port}:w'
+                    #code_right_1 = f'{cable.name}:w{connection_color.via_port}:e'
+                    #code_right_2 = f'{connection_color.to_name}{to_port}:w'
+                    code_right_1 = f'"{cable.name}":w{connection_color.via_port}'
+                    code_right_2 = f'"{connection_color.to_name}"{to_port}'
                     e = Edge(code_right_1, code_right_2)
                     dot.add_edge(e)
                     to_string = f'{connection_color.to_name}:{connection_color.to_port}' if self.connectors[connection_color.to_name].show_name else ''
@@ -302,7 +306,7 @@ class Harness:
             graph.write(str(filename)+"."+f, format=f)
             #graph.format = f
             #graph.render(filename=filename, view=view, cleanup=cleanup)
-        graph.write_dot(f'{filename}.gv')
+        graph.write_raw(f'{filename}.gv')
         # bom output
         bom_list = self.bom_list()
         with open_file_write(f'{filename}.bom.tsv') as file:
