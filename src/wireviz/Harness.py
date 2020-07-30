@@ -3,7 +3,7 @@
 
 from wireviz.DataClasses import Connector, Cable
 #from graphviz import Graph
-from pydot import Dot, Node, Edge
+from pydot import graph_from_dot_data, Dot, Node, Edge
 from wireviz import wv_colors, wv_helper
 from wireviz.wv_colors import get_color_hex
 from wireviz.wv_helper import awg_equiv, mm2_equiv, tuplelist2tsv, \
@@ -14,6 +14,102 @@ from collections import Counter
 from typing import List
 from pathlib import Path
 import re
+
+
+
+#---------------------------------------------------pydot helper functions
+WIRE_ATTRIBUTE="wv_wire"
+WIRE_SPLINE_ATTRIBUTE="wv_wire_spline"
+WIRE_COLOR_ATTRIBUTE="wv_color"
+
+
+
+
+
+
+
+def stringToPoint(str):
+  return tuple(float(n) for n in str.split(","))
+
+def stringToPoints(str):
+  str = str.replace('"', '')
+  return list(stringToPoint(s) for s in str.split(" "))
+
+def pointsToString(points):
+  return " ".join("{},{}".format(round(p[0],3),round(p[1],3)) for p in points)
+
+
+def calcPointsinBewteen(l, r):
+  diff_x = (r[0]-l[0])/3
+  diff_y = (r[1]-l[1])/3
+
+  return [(l[0]+diff_x, l[1]+diff_y), (l[0]+2*diff_x, l[1]+2*diff_y)]
+
+def combineSplines(*splines):
+  spline = splines[0]
+
+  for i in range(1, len(splines)):
+    l = splines[i-1][-1]
+    r = splines[i][0]
+
+    spline.extend(calcPointsinBewteen(l, r))
+    spline.extend(splines[i])
+
+  return spline
+
+
+def combineEdge(*edges):
+  #print("COMBINE_EDGES")
+
+  splines = [stringToPoints(e.get("pos")) for e in edges]
+
+  spline = combineSplines(*splines)
+
+  e = Edge(edges[0].get_source(),edges[-1].get_destination())
+  e.set("pos", pointsToString(spline))
+
+  return e
+
+def combineGraphEdges(*edges):
+  from itertools import groupby
+
+  newEdges = []
+  edges = sorted(*edges, key=lambda e: int(e.get(WIRE_ATTRIBUTE)))
+  for ref, idx in groupby(edges, lambda e: int(e.get(WIRE_ATTRIBUTE))):
+    l = list(idx)
+    #print(ref, " : ", l)
+    l.sort(key=lambda e: e.get(WIRE_SPLINE_ATTRIBUTE))
+
+    wire = l[0].get(WIRE_ATTRIBUTE)
+    colors = wv_colors.get_color_hex(l[0].get(WIRE_COLOR_ATTRIBUTE))
+
+    e = combineEdge(*l)
+    e.set_penwidth("4.0")
+    newEdges.append(e)
+
+    
+    e_color1 = Edge(e.get_source(), e.get_destination(), pos=e.get_pos(), penwidth="3.0", color=colors[0])
+    newEdges.append(e_color1)
+
+    if len(colors) > 1:
+        e_color2 = Edge(e.get_source(), e.get_destination(), pos=e.get_pos(), penwidth="3.0", color=colors[1], style="dashed")
+        newEdges.append(e_color2)
+  
+  return newEdges
+#---------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 class Harness:
@@ -141,6 +237,8 @@ class Harness:
                              f'{connector.name}:p{loop[1]}{loop_side}:{loop_dir}')
                     dot.add_edge(e)
 
+        wire_id = 0
+        wire_spline_id = 0
         for _, cable in self.cables.items():
 
             awg_fmt = ''
@@ -204,11 +302,11 @@ class Harness:
                     html = f'{html}<td>{bla}</td>'
                 html = f'{html}</tr>'
 
-                bgcolors = ['#000000'] + get_color_hex(connection_color, pad=pad) + ['#000000']
-                html = f'{html}<tr><td colspan="{len(p)}" border="0" cellspacing="0" cellpadding="0" port="w{i}" height="{(2 * len(bgcolors))}"><table cellspacing="0" cellborder="0" border = "0">'
-                for j, bgcolor in enumerate(bgcolors[::-1]):  # Reverse to match the curved wires when more than 2 colors
-                    html = f'{html}<tr><td colspan="{len(p)}" cellpadding="0" height="2" bgcolor="{bgcolor if bgcolor != "" else wv_colors.default_color}" border="0"></td></tr>'
-                html = html + '</table></td></tr>'
+                bgcolors = get_color_hex(connection_color, pad=pad)
+                html = f'{html}<tr><td colspan="{len(p)}" border="0" cellspacing="0" cellpadding="0" port="w{i}" height="6">'
+                #for j, bgcolor in enumerate(bgcolors[::-1]):  # Reverse to match the curved wires when more than 2 colors
+                #    html = f'{html}<tr><td colspan="{len(p)}" cellpadding="0" height="2" bgcolor="{bgcolor if bgcolor != "" else wv_colors.default_color}" border="0"></td></tr>'
+                html = html + '</td></tr>'
                 if(cable.category == 'bundle'):  # for bundles individual wires can have part information
                     # create a list of wire parameters
                     wireidentification = []
@@ -247,11 +345,7 @@ class Harness:
 
             # connections
             for connection_color in cable.connections:
-                if isinstance(connection_color.via_port, int):  # check if it's an actual wire and not a shield
-                    dot.set_edge_defaults(color=':'.join(['#000000'] + wv_colors.get_color_hex(cable.colors[connection_color.via_port - 1], pad=pad) + ['#000000']))
-                else:  # it's a shield connection
-                    # shield is shown as a thin tinned wire
-                    dot.set_edge_defaults(color=':'.join(['#000000', wv_colors.get_color_hex('SN', pad=False)[0], '#000000']))
+                wire_spline_id = 0
                 if connection_color.from_port is not None:  # connect to left
                     from_port = f':p{connection_color.from_port}r' if self.connectors[connection_color.from_name].style != 'simple' else ''
                     #code_left_1 = f'"{connection_color.from_name}"{from_port}:e'
@@ -259,9 +353,21 @@ class Harness:
                     code_left_1 = f'"{connection_color.from_name}"{from_port}'
                     code_left_2 = f'"{cable.name}":w{connection_color.via_port}'
                     e = Edge(code_left_1, code_left_2)
+
+                    e.set(WIRE_ATTRIBUTE, str(wire_id))
+                    e.set(WIRE_SPLINE_ATTRIBUTE, str(wire_spline_id))
+                    wire_spline_id = wire_spline_id + 1
+                    if isinstance(connection_color.via_port, int):  # check if it's an actual wire and not a shield
+                        e.set(WIRE_COLOR_ATTRIBUTE, cable.colors[connection_color.via_port - 1])
+                    else:  # it's a shield connection
+                        # shield is shown as a thin tinned wire
+                        e.set(WIRE_COLOR_ATTRIBUTE, 'SN')
+                        #dot.set_edge_defaults(color=':'.join(['#000000', wv_colors.get_color_hex('SN', pad=False)[0], '#000000']))
+                    
                     dot.add_edge(e)
                     from_string = f'{connection_color.from_name}:{connection_color.from_port}' if self.connectors[connection_color.from_name].show_name else ''
                     html = html.replace(f'<!-- {connection_color.via_port}_in -->', from_string)
+                    
                 if connection_color.to_port is not None:  # connect to right
                     to_port = f':p{connection_color.to_port}l' if self.connectors[connection_color.to_name].style != 'simple' else ''
                     #code_right_1 = f'{cable.name}:w{connection_color.via_port}:e'
@@ -269,21 +375,45 @@ class Harness:
                     code_right_1 = f'"{cable.name}":w{connection_color.via_port}'
                     code_right_2 = f'"{connection_color.to_name}"{to_port}'
                     e = Edge(code_right_1, code_right_2)
+
+                    e.set(WIRE_ATTRIBUTE, str(wire_id))
+                    e.set(WIRE_SPLINE_ATTRIBUTE, str(wire_spline_id))
+                    wire_spline_id = wire_spline_id + 1
+
                     dot.add_edge(e)
                     to_string = f'{connection_color.to_name}:{connection_color.to_port}' if self.connectors[connection_color.to_name].show_name else ''
                     html = html.replace(f'<!-- {connection_color.via_port}_out -->', to_string)
+                
+                wire_id = wire_id + 1
 
             n = Node(cable.name, label=f'<{html}>', shape='box', style='\"filled,dashed\"' if cable.category == 'bundle' else '', margin='0', fillcolor='white')
             dot.add_node(n)
 
-        return dot
+
+        g = graph_from_dot_data(dot.create_dot(prog="dot", f="dot").decode('utf-8'))[0]
+
+        newEdges = combineGraphEdges(g.get_edges())
+
+        #plot new graph
+        g2 = Dot(rankdir="LR", outputorder="nodesfirst")
+        g2.set_type("graph")
+
+        #copy nodes
+        for n in g.get_nodes():
+            g2.add_node(n)
+
+        #add combined edges
+        for e in newEdges:
+            g2.add_edge(e)
+
+        return g2
 
     @property
     def png(self):
         from io import BytesIO
         graph = self.create_graph()
         data = BytesIO()
-        data.write(graph.create(f='png'))
+        data.write(graph.create(f='png', prog=['neato', '-n2']))
         data.seek(0)
         return data.read()
 
@@ -292,7 +422,7 @@ class Harness:
         from io import BytesIO
         graph = self.create_graph()
         data = BytesIO()
-        data.write(graph.create(f='svg'))
+        data.write(graph.create(f='svg', prog=['neato', '-n2']))
         data.seek(0)
         return data.read()
 
@@ -303,7 +433,7 @@ class Harness:
         print (graph)
         print (filename)
         for f in fmt:
-            graph.write(str(filename)+"."+f, format=f)
+            graph.write(str(filename)+"."+f, format=f, prog=["neato", "-n2"])
             #graph.format = f
             #graph.render(filename=filename, view=view, cleanup=cleanup)
         graph.write_raw(f'{filename}.gv')
