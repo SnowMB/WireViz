@@ -25,11 +25,11 @@ WIRE_COLOR_ATTRIBUTE="wv_color"
 
 
 
-
-
+debugPrint = False
 
 def stringToPoint(str):
-  return tuple(float(n) for n in str.split(","))
+  split = re.split(r'(\d+\.?\d+)', str)
+  return tuple([float(split[1]), float(split[3])])
 
 def stringToPoints(str):
   str = str.replace('"', '')
@@ -77,23 +77,26 @@ def combineGraphEdges(*edges):
   edges = sorted(*edges, key=lambda e: int(e.get(WIRE_ATTRIBUTE)))
   for ref, idx in groupby(edges, lambda e: int(e.get(WIRE_ATTRIBUTE))):
     l = list(idx)
-    #print(ref, " : ", l)
     l.sort(key=lambda e: e.get(WIRE_SPLINE_ATTRIBUTE))
 
     wire = l[0].get(WIRE_ATTRIBUTE)
+
     colors = wv_colors.get_color_hex(l[0].get(WIRE_COLOR_ATTRIBUTE))
 
     e = combineEdge(*l)
+    e.set(WIRE_ATTRIBUTE, wire)
     e.set_penwidth("4.0")
     newEdges.append(e)
 
     
     e_color1 = Edge(e.get_source(), e.get_destination(), pos=e.get_pos(), penwidth="3.0", color=colors[0])
+    e_color1.set(WIRE_ATTRIBUTE, wire)
     newEdges.append(e_color1)
 
     if len(colors) > 1:
         e_color2 = Edge(e.get_source(), e.get_destination(), pos=e.get_pos(), penwidth="3.0", color=colors[1], style="dashed")
-        newEdges.append(e_color2)
+        e_color2.set(WIRE_ATTRIBUTE, wire)
+        newEdges.append(e_color2)        
   
   return newEdges
 #---------------------------------------------------
@@ -406,7 +409,7 @@ class Harness:
         for e in newEdges:
             g2.add_edge(e)
 
-        return g2
+        return dot, g, g2
 
     @property
     def png(self):
@@ -428,9 +431,12 @@ class Harness:
 
     def output(self, filename: (str, Path), view: bool = False, cleanup: bool = True, fmt: tuple = ('pdf', )) -> None:
         # graphical output
-        graph = self.create_graph()
+        intermediate1, intermediate2, graph = self.create_graph()
 
-        print (graph)
+        intermediate1.write_raw(f'{filename}_pre1.gv')
+        intermediate2.write_raw(f'{filename}_pre2.gv')
+
+        #print (graph)
         print (filename)
         for f in fmt:
             graph.write(str(filename)+"."+f, format=f, prog=["neato", "-n2"])
