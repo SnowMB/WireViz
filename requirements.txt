@@ -1,5 +1,5 @@
 click
-graphviz
 pillow
 pyyaml
 setuptools
+pydot
